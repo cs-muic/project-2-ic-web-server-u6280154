@@ -104,18 +104,50 @@ void write_all(int connFd, char *buf, size_t len) {
 
 /* Bad, slow readline */
 ssize_t read_line(int connFd, char *usrbuf, size_t maxlen) {
-    int n;
-    char c, *bufp = usrbuf;
-
-    for (n = 1; n < maxlen; n++) { 
-        int numRead;
-        if ((numRead = read(connFd, &c, 1)) == 1) {
-            *bufp++ = c;
-            if (c == '\n') { n++; break; }
-        } 
-        else if (numRead == 0) { break; } /* EOF */
-        else return -1;	  /* Error */
-    }
-    *bufp = '\0';
-    return n-1;
+   enum{
+   	STATE_START = 0,STATE_CR,STATE_CRLF
+   };
+   
+   int i = 0,state;
+   char ch;
+   memset(usrbuf, 0, 8192);
+   int n;
+   int max = maxlen-1;
+   
+   state = STATE_START;
+   while (state != STATE_CRLF) {
+		char expected = 0;
+		
+		if(i ==max){
+			break;
+		}
+		
+		if(n = read(connFd,&ch,1) < 0){
+			break;
+		}
+		
+		usrbuf[i++] = ch;
+		
+		switch(state){
+			case STATE_START:
+				expected = '\r';
+				break;
+			case STATE_CR:
+				expected = '\n';
+				break;
+			default:
+				state = STATE_START;
+				continue;
+		}
+		
+		if(ch == expected){
+			state++;
+		}
+		else{
+			state = STATE_START;
+		
+		}
+	}
+	usrbuf[i] = '\0';
+	return i;	
 }

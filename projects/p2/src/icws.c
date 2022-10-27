@@ -9,17 +9,33 @@
 #include "parse.h"
 #include "pcsa_net.h"
 #include <getopt.h>
+#include <time.h>
+#include <unistd.h>
 
-#define BUFSIZE 1024
+#define BUFSIZE 8192
 
 typedef struct sockaddr SA;
 
-#define VYERROR_VERBOSE
+#define YYERROR_VERBOSE
 #ifdef YACCDEBUG
 #define YPRINTF(...) printf(_VA_ARGS_)
 #else
 #define YPRINTF(...)
 #endif
+
+/*
+char* today(){
+	char result[100];
+	time_t t;
+	time(&t);
+	
+	struct tm *local = localtime(&t);
+	sprintf(result, "%d/%d/%d",local->tm_mday + 1, local->tm_mon + 1,local->tm_year + 1900);
+	
+	return strdup(result);
+}*/
+
+
 
 char* get_Extension(char *filename){
 	char* extension = filename;
@@ -66,9 +82,74 @@ char* mime_type(char *ext){
 	}
 	else{
 		return NULL;
-	
+	}
+}
+
+void get_filename(char* temp,char* root,char* req){
+	strcpy(temp, root);
+	if(strcmp(req,"/") == 0){
+		req = "/index.html";
+	}
+	else if(req[0] != '/'){
+		strcat(temp,"/");
+	}
+	strcat(temp, req);	
+}
+
+/*
+void header_writer(char* header,int inFd,char* file){
+	if(inFd < 0){
+		sprintf(header,
+			"HTTP/1.1 404 not found\r\n"
+			"Date: %s,\r\n"
+			"Server: Icws\r\n"
+			"Connection: close\r\n",today());
+		return -1;
 	}
 	
+	
+}*/
+
+void new_respond_get(int connFd,char *root,char *object){
+	char filename[BUFSIZE];
+	get_filename(filename, root, object);
+	
+	printf("%s\n",filename);
+	int inFd = open(filename, O_RDONLY);
+	if(inFd < 0){
+		fprintf(stderr,"open file error\n");
+		respond_with_error(connFd);
+		return;
+	}
+	
+        struct stat statbuf;
+	char get[BUFSIZE];
+	int readNum,fileNum;
+	int retVal = 2;
+	char buf[BUFSIZE];
+	retVal = stat(filename,&statbuf);
+	
+	char *ext = get_Extension(filename);
+	char *mime;
+	mime = mime_type(ext);
+	
+	sprintf(buf, 
+	"HTTP/1.1 200 OK\r\n"
+	"Server: Icws\r\n"
+	"Content-length: %lu\r\n"
+	"Connection: close\r\n"
+	"Content-type: %s\r\n\r\n",statbuf.st_size,mime);
+	
+	write_all(connFd, buf, strlen(buf));
+	
+	while((readNum = read(inFd,get,BUFSIZE)) > 0){
+		write_all(connFd,get,readNum);
+	}
+	
+	if(readNum == -1){
+		fprintf(stderr,"read file error\n");
+		return;
+	}
 	
 }
 
@@ -91,7 +172,8 @@ void respond_get(int connFd,char *root,char *temp,char *mime){
 	char buf[BUFSIZE];
 	retVal = stat(path,&statbuf);
 	
-	sprintf(buf, "HTTP/1.1 200 OK\r\n"
+	sprintf(buf, 
+	"HTTP/1.1 200 OK\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
 	"Connection: close\r\n"
@@ -126,7 +208,8 @@ void respond_head(int connFd,char *root,char *temp,char *mime){
 	char buf[BUFSIZE];
 	retVal = stat(path,&statbuf);
 	
-	sprintf(buf, "HTTP/1.1 200 OK\r\n"
+	sprintf(buf, 
+	"HTTP/1.1 200 OK\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
 	"Connection: close\r\n"
@@ -141,50 +224,38 @@ void respond_head(int connFd,char *root,char *temp,char *mime){
 }
 
 void serve_http(int connFd, char* root){
-    char buf[BUFSIZE];
-    
+   char buf[BUFSIZE];
+   
     if(!read_line(connFd,buf,BUFSIZE)){
     	return;
     }
     
-    char method[BUFSIZE],obj[BUFSIZE],version[BUFSIZE];
-    sscanf(buf,"%s %s %s",method,obj,version);
-    
-    while(read_line(connFd,buf,BUFSIZE) > 0){
-    	if(strcmp(buf,"\r\n") == 0){
-    		break;
-    	}
-    }
-    
-    char* temp;
-    char* mime;
-    if(strcmp(method, "GET") == 0){
-        temp = get_Extension(obj);
-        if(strcmp(obj,"/") == 0){
-                mime = mime_type("html");
-        	respond_get(connFd,root,"/index.html",mime);
-        }
-        else{
-                mime = mime_type(temp);
-        	respond_get(connFd,root,obj,mime);
-        }
-     }
-     else if(strcmp(method, "HEAD") == 0){
-        temp = get_Extension(obj);
-        if(strcmp(obj,"/") == 0){
-                mime = mime_type("html");
-        	respond_get(connFd,root,"/index.html",mime);
-        }
-        else{
-                mime = mime_type(temp);
-        	respond_get(connFd,root,obj,mime);
-        }
-     }
-  }	
+   char line[BUFSIZE];
+   printf("\n%s\n",buf);
+   while(read_line(connFd, line, BUFSIZE) > 0){
+   	strcat(buf, line);
+   	if(strcmp(line,"\r\n") == 0){
+   		break;
+   	}
+   }
+   
+   printf("%s\n",buf);
+   
+   Request *request = parse(buf,BUFSIZE,connFd);
+   printf("Request URI: %s\n",request->http_uri);
+   if(strcmp(request->http_method, "GET") == 0){
+   	new_respond_get(connFd,root,request->http_uri);
+   }
+     
+   free(request->headers);
+   free(request);
+  
+}	
   
 //./icws --port <portnumber> --root <folderName>
 
 int main(int argc, char* argv[]) {
+
 
     if(argc < 4){
     	printf("Usage: ./icws --port <ListenPort> --root <rootFolder>\n");
