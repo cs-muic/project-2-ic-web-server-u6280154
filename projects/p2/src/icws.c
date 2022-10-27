@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include "parse.h"
 #include "pcsa_net.h"
+#include <getopt.h>
 
 #define BUFSIZE 1024
 
@@ -181,14 +182,41 @@ void serve_http(int connFd, char* root){
      }
   }	
   
-  
+//./icws --port <portnumber> --root <folderName>
+
 int main(int argc, char* argv[]) {
-    int listenFd = open_listenfd(argv[1]);
-    
-    if(argv[2] == NULL){
-    	fprintf(stderr,"root not provided\n");
+
+    if(argc < 4){
+    	printf("Usage: ./icws --port <ListenPort> --root <rootFolder>\n");
     	exit(-1);
     }
+    
+    int opt;
+    int option_index;
+    char port[BUFSIZE];
+    char root[BUFSIZE];
+    
+    struct option long_options[] = {
+    	{"port",1,NULL,'a'},
+    	{"root",1,NULL,'b'}
+    };
+    
+    while((opt = getopt_long(argc,argv,"a:b:",long_options,&option_index)) != -1){
+    	switch(opt){
+    		case 'a':
+    			strcpy(port, optarg);
+    			break;
+    		case 'b':
+    			strcpy(root, optarg);
+    			break;
+    		case '?':
+    			break;
+    		default:
+    			printf("optarg return %d\n", opt);
+    	}
+    }
+    
+    int listenFd = open_listenfd(port);
     
     for (;;) {
         struct sockaddr_storage clientAddr; 
@@ -202,7 +230,7 @@ int main(int argc, char* argv[]) {
         else 
             printf("Connection from UNKNOWN.");
        
-        serve_http(connFd,argv[2]); 
+        serve_http(connFd,root); 
         close(connFd);
     }
     
