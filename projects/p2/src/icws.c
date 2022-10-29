@@ -34,7 +34,20 @@ char* today(){
 	
 	return strdup(result);
 }*/
+char* server_date(){
+        char date[30];
+	time_t current = time(0);
+	struct tm local = *gmtime(&current);
+	strftime(date, 30, "%a, %d %b %Y %H:%M:%S %Z",&local);
+	return strdup(date);
+}
 
+char* server_last_modified(struct stat statbuf){
+	char last_modified[30];
+	struct tm local = *gmtime(&statbuf.st_mtime);
+	strftime(last_modified, 30, "%a, %d %b %Y %H:%M:%S %Z",&local);
+	return strdup(last_modified);
+}
 
 
 char* get_Extension(char *filename){
@@ -96,20 +109,6 @@ void get_filename(char* temp,char* root,char* req){
 	strcat(temp, req);	
 }
 
-/*
-void header_writer(char* header,int inFd,char* file){
-	if(inFd < 0){
-		sprintf(header,
-			"HTTP/1.1 404 not found\r\n"
-			"Date: %s,\r\n"
-			"Server: Icws\r\n"
-			"Connection: close\r\n",today());
-		return -1;
-	}
-	
-	
-}*/
-
 void new_respond_get(int connFd,char *root,char *object){
 	char filename[BUFSIZE];
 	get_filename(filename, root, object);
@@ -133,12 +132,19 @@ void new_respond_get(int connFd,char *root,char *object){
 	char *mime;
 	mime = mime_type(ext);
 	
+	
 	sprintf(buf, 
 	"HTTP/1.1 200 OK\r\n"
+	"Date: %s\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
 	"Connection: close\r\n"
-	"Content-type: %s\r\n\r\n",statbuf.st_size,mime);
+	"Content-type: %s\r\n"
+	"Last-Modified: %s\r\n\r\n"
+         ,server_date()
+         ,statbuf.st_size
+         ,mime
+         ,server_last_modified(statbuf));
 	
 	write_all(connFd, buf, strlen(buf));
 	
@@ -153,50 +159,12 @@ void new_respond_get(int connFd,char *root,char *object){
 	
 }
 
-void respond_get(int connFd,char *root,char *temp,char *mime){
-	char path[BUFSIZE];
-
-	sprintf(path,"%s%s",root,temp);
-
-	int inFd = open(path, O_RDONLY);
-	if(inFd < 0){
-		fprintf(stderr,"open file error\n");
-		respond_with_error(connFd);
-		return;
-	}
+void new_respond_head(int connFd,char *root,char *object){
+	char filename[BUFSIZE];
+	get_filename(filename, root, object);
 	
-        struct stat statbuf;
-	char get[BUFSIZE];
-	int readNum,fileNum;
-	int retVal = 2;
-	char buf[BUFSIZE];
-	retVal = stat(path,&statbuf);
-	
-	sprintf(buf, 
-	"HTTP/1.1 200 OK\r\n"
-	"Server: Icws\r\n"
-	"Content-length: %lu\r\n"
-	"Connection: close\r\n"
-	"Content-type: %s\r\n\r\n",statbuf.st_size,mime);
-	
-	write_all(connFd, buf, strlen(buf));
-	
-	while((readNum = read(inFd,get,BUFSIZE)) > 0){
-		write_all(connFd,get,readNum);
-	}
-	
-	if(readNum == -1){
-		fprintf(stderr,"read file error\n");
-		return;
-	}
-}
-
-void respond_head(int connFd,char *root,char *temp,char *mime){
-	char path[BUFSIZE];
-
-	sprintf(path,"%s%s",root,temp);
-
-	int inFd = open(path, O_RDONLY);
+	printf("%s\n",filename);
+	int inFd = open(filename, O_RDONLY);
 	if(inFd < 0){
 		fprintf(stderr,"open file error\n");
 		respond_with_error(connFd);
@@ -206,21 +174,27 @@ void respond_head(int connFd,char *root,char *temp,char *mime){
         struct stat statbuf;
 	int retVal = 2;
 	char buf[BUFSIZE];
-	retVal = stat(path,&statbuf);
+	retVal = stat(filename,&statbuf);
 	
-	sprintf(buf, 
+	char *ext = get_Extension(filename);
+	char *mime;
+	mime = mime_type(ext);
+	
+        sprintf(buf, 
 	"HTTP/1.1 200 OK\r\n"
+	"Date: %s\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
 	"Connection: close\r\n"
-	"Content-type: %s\r\n\r\n",statbuf.st_size,mime);
+	"Content-type: %s\r\n"
+	"Last-Modified: %s\r\n\r\n"
+         ,server_date()
+         ,statbuf.st_size
+         ,mime
+         ,server_last_modified(statbuf));
 	
 	write_all(connFd, buf, strlen(buf));
 	
-	if(close(inFd) < 0){
-		printf("Failed to close\n");
-	}
-
 }
 
 void serve_http(int connFd, char* root){
@@ -229,7 +203,8 @@ void serve_http(int connFd, char* root){
     if(!read_line(connFd,buf,BUFSIZE)){
     	return;
     }
-    
+   
+   
    char line[BUFSIZE];
    printf("\n%s\n",buf);
    while(read_line(connFd, line, BUFSIZE) > 0){
@@ -240,11 +215,13 @@ void serve_http(int connFd, char* root){
    }
    
    printf("%s\n",buf);
-   
    Request *request = parse(buf,BUFSIZE,connFd);
    printf("Request URI: %s\n",request->http_uri);
    if(strcmp(request->http_method, "GET") == 0){
    	new_respond_get(connFd,root,request->http_uri);
+   }
+   else if(strcmp(request->http_method, "HEAD") == 0){
+   	new_respond_head(connFd,root,request->http_uri);
    }
      
    free(request->headers);
@@ -255,8 +232,6 @@ void serve_http(int connFd, char* root){
 //./icws --port <portnumber> --root <folderName>
 
 int main(int argc, char* argv[]) {
-
-
     if(argc < 4){
     	printf("Usage: ./icws --port <ListenPort> --root <rootFolder>\n");
     	exit(-1);
