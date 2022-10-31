@@ -122,7 +122,7 @@ ssize_t read_line(int connFd, char *usrbuf, size_t maxlen) {
 			break;
 		}
 		
-		if(n = read(connFd,&ch,1) < 0){
+		if((n = read(connFd,&ch,1)) < 0){
 			break;
 		}
 		
