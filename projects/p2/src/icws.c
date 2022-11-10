@@ -11,11 +11,16 @@
 #include <getopt.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <poll.h>
+#include <stdbool.h>
 
 #define BUFSIZE 8192
 #define DATESIZE 30
-
-typedef struct sockaddr SA;
+#define MAXTHREAD 256
+#define PERSISTENT 1
+#define CLOSE 0
+#define infinite for(;;)
 
 #define YYERROR_VERBOSE
 #ifdef YACCDEBUG
@@ -23,26 +28,58 @@ typedef struct sockaddr SA;
 #else
 #define YPRINTF(...)
 #endif
-void respond_404(int connFd){
+
+typedef struct sockaddr SA;
+
+char* dirName;
+int thread_number,timeout;
+
+pthread_t thread_pool[MAXTHREAD];
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_parse = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
+
+struct survival_bag{
+	struct sockaddr_storage clientAddr;
+	int connFd;
+	
+};
+
+void respond_404(int connFd,char* type){
 	char *msg = "<h1>404 NOT FOUND</h1>";
 	char buf[BUFSIZE];
+	memset(buf,0,BUFSIZE);
 	sprintf(buf, "HTTP/1.1 404 Not Found\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
-	"Connection: close\r\n"
-	"Content-type: text/html\r\n\r\n",strlen(msg));
+	"Connection: %s\r\n"
+	"Content-type: text/html\r\n\r\n",strlen(msg),type);
 	write_all(connFd, buf, strlen(buf));
 	write_all(connFd, msg, strlen(msg));
 }
 
-void respond_501(int connFd){
+void respond_501(int connFd,char* type){
 	char *msg = "<h1>501 METHOD NOT IMPLEMENTED</h1>";
 	char buf[BUFSIZE];
+	memset(buf,0,BUFSIZE);
 	sprintf(buf, "HTTP/1.1 501 method not implemented\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
-	"Connection: close\r\n"
-	"Content-type: text/html\r\n\r\n",strlen(msg));
+	"Connection: %s\r\n"
+	"Content-type: text/html\r\n\r\n",strlen(msg),type);
+	write_all(connFd, buf, strlen(buf));
+	write_all(connFd, msg, strlen(msg));
+}
+
+void respond_505(int connFd,char* type){
+	char *msg = "<h1>505 BAD VERSION NUMBER</h1>";
+	char buf[BUFSIZE];
+	memset(buf,0,BUFSIZE);
+	sprintf(buf, "HTTP/1.1 505 bad version number\r\n"
+	"Server: Icws\r\n"
+	"Content-length: %lu\r\n"
+	"Connection: %s\r\n"
+	"Content-type: text/html\r\n\r\n",strlen(msg),type);
 	write_all(connFd, buf, strlen(buf));
 	write_all(connFd, msg, strlen(msg));
 }
@@ -94,7 +131,6 @@ void get_filename(char* temp,char* root,char* req){
 	strcat(temp, req);	
 }
 
-
 void server_date(char* date){
 	time_t current = time(0);
 	struct tm local = *gmtime(&current);
@@ -106,13 +142,14 @@ void server_last_modified(char* last_modified,struct stat statbuf){
 	strftime(last_modified,DATESIZE,"%a, %d %b %Y %H:%M:%S %Z",&local);
 }
 
-void respond(int connFd,char *root,char *object,int key){
-	char filename[BUFSIZE];
+void respond(int connFd,char *root,char *object,int key,char* type){
+	char filename[BUFSIZE],buf[BUFSIZE];
 	get_filename(filename, root, object);
 	int inFd = open(filename, O_RDONLY);
 	if(inFd < 0){
+	        printf("Activate11\n");
 		fprintf(stderr,"open file error\n");
-		respond_404(connFd);
+		respond_404(connFd,type);
 		if(inFd){
 			close(inFd);
 		}
@@ -120,17 +157,11 @@ void respond(int connFd,char *root,char *object,int key){
 	}
 	
         struct stat statbuf;
-	char get[BUFSIZE];
 	int readNum;
-	char buf[BUFSIZE];
+	char date[DATESIZE],last_modified[DATESIZE];
 	stat(filename,&statbuf);
-	
-	char *ext = get_Extension(filename);
-	char *mime;
+	char *ext = get_Extension(filename), *mime;
 	mime = mime_type(ext);
-	
-	char date[DATESIZE];
-	char last_modified[DATESIZE];
 	server_date(date);
 	server_last_modified(last_modified,statbuf);
 	
@@ -138,13 +169,15 @@ void respond(int connFd,char *root,char *object,int key){
 	"Date: %s\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
-	"Connection: close\r\n"
+	"Connection: %s\r\n"
 	"Content-type: %s\r\n"
-	"Last-Modified:%s\r\n\r\n",date,statbuf.st_size,mime,last_modified);
-	
+	"Last-Modified:%s\r\n\r\n",
+	date,statbuf.st_size,type,mime,last_modified);
+
 	write_all(connFd, buf, strlen(buf));
 	
 	if(key == 1){
+	        char get[BUFSIZE];
 		while((readNum = read(inFd,get,BUFSIZE)) > 0){
 			write_all(connFd,get,readNum);
 	        }
@@ -160,58 +193,164 @@ void respond(int connFd,char *root,char *object,int key){
 
 }
 
-void serve_http(int connFd, char* root){
+int serve_http(int connFd, char* root){   
    char buf[BUFSIZE];
-   
-   if(!read_line(connFd,buf,BUFSIZE)){
-    	return;
-    }
-   
    char line[BUFSIZE];
-   
-   if(!read_line(connFd,line,BUFSIZE)){
-    	return;
-    }
-    
-   while(read_line(connFd, line, BUFSIZE) > 0){
-   	strcat(buf, line);
-   	if(strcmp(line,"\r\n") == 0){
+   struct pollfd fds[1];
+   int readline;
+   infinite{
+   	fds[0].fd = connFd;
+   	fds[0].events = POLLIN;
+   	int pollret = poll(fds,1,timeout*1000);
+   	if(pollret <= 0){
+   	        memset(buf,0,BUFSIZE);
+   		return CLOSE;
+   	}
+   	else{
+   		while((readline = read_line(connFd,line,BUFSIZE)) > 0){
+   			strcat(buf, line);
+   			if(strstr(buf,"\r\n\r\n") != NULL){
+   				break;
+   			}
+   			memset(line,'\0',BUFSIZE);
+   		}
    		break;
    	}
    }
+   
    printf("%s\n",buf);
+   pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
-   if(strcmp(request->http_method, "GET") == 0){
-   	respond(connFd,root,request->http_uri,1);
-   }
-   else if(strcmp(request->http_method, "HEAD") == 0){
-   	respond(connFd,root,request->http_uri,0);
-   }
-   else{
-   	respond_501(connFd);
+   pthread_mutex_unlock(&mutex_parse);
+   
+   int connection = PERSISTENT;
+   char* connection_type;
+   
+   for(int i = 0;i < request->header_count;i++){
+   	if(strcmp(request->headers[i].header_name,"Connection") == 0){
+   		if(strcmp(request->headers[i].header_value,"close")){
+   			connection_type = "close";
+   		}
+   		else{
+   			connection_type = "keep-alive";
+   		}
+   		break;
+   	}
    }
    
+   if(strcmp(request->http_version,"HTTP/1.1") != 0){
+   	respond_505(connFd,connection_type);
+   	
+   	free(request->headers);
+        free(request);
+        
+        memset(buf,0,BUFSIZE);
+   	return connection;
+   }
+   if(strcmp(request->http_method, "GET") == 0){
+   	respond(connFd,root,request->http_uri,1,connection_type);
+   }
+   else if(strcmp(request->http_method, "HEAD") == 0){
+   	respond(connFd,root,request->http_uri,0,connection_type);
+   }
+   else{
+   	respond_501(connFd,connection_type);
+   }   
    free(request->headers);
    free(request);
-  
+   memset(buf,0,BUFSIZE);
+   return connection;
 }	
-  
-//./icws --port <portnumber> --root <folderName>
 
+struct node{
+	struct node* next;
+	struct survival_bag *context;
+};
+
+typedef struct node node_t;
+
+node_t* head = NULL;
+node_t* tail = NULL;
+
+void enqueue(struct survival_bag *client_socket){
+	node_t *newnode = malloc(sizeof(node_t));
+	newnode->context = client_socket;
+	newnode->next = NULL;
+	
+	if(tail == NULL){
+		head = newnode;
+	}
+	else{
+		tail->next = newnode;
+	
+	}
+	tail = newnode;
+}
+
+struct survival_bag* dequeue(){
+	if(head != NULL){
+		struct survival_bag *result = head->context;
+		node_t *temp = head;
+		head = head->next;
+		if(head == NULL){
+			tail = NULL;
+		}
+		free(temp);
+		return result;
+	}
+	return NULL;
+}
+  
+void* conn_handler(void *args) {
+	struct survival_bag *context = (struct survival_bag *) args;
+	int connection = PERSISTENT;
+	
+	while(connection == 1){
+		connection = serve_http(context->connFd, dirName);
+	}
+	close(context->connFd);
+	free(context);
+	return NULL;
+}  
+
+
+void* thread_function(void *args){
+	infinite
+	{
+		int *pclient,detect = 0;
+		//int detect = 0;
+		
+		pthread_mutex_lock(&mutex);
+		
+		if((pclient = dequeue()) == NULL){
+			pthread_cond_wait(&condition_var, &mutex);
+			pclient = dequeue();
+			detect = 1;
+		}
+		
+		pthread_mutex_unlock(&mutex);
+		
+		if(detect > 0){
+			conn_handler(pclient);
+		}
+	}
+}
+
+//./icws --port <portnumber> --root <folderName> --numThreads <nThread> --timeout <ntime>
 int main(int argc, char* argv[]) {
-    if(argc < 4){
-    	printf("Usage: ./icws --port <ListenPort> --root <rootFolder>\n");
+    if(argc < 7){
+    	printf("Usage: ./icws --port <ListenPort> --root <rootFolder> --numThreads <nThread> --timeout <ntime>\n");
     	exit(-1);
     }
     
-    int opt;
-    int option_index;
-    char port[BUFSIZE];
-    char root[BUFSIZE];
+    int opt,option_index;
+    char port[BUFSIZE],root[BUFSIZE],numThreads[BUFSIZE],time_out[BUFSIZE];
     
     struct option long_options[] = {
     	{"port",1,NULL,'a'},
-    	{"root",1,NULL,'b'}
+    	{"root",1,NULL,'b'},
+    	{"numThreads",1,NULL,'c'},
+    	{"timeout",1,NULL,'d'}
     };
     
     while((opt = getopt_long(argc,argv,"a:b:",long_options,&option_index)) != -1){
@@ -222,6 +361,12 @@ int main(int argc, char* argv[]) {
     		case 'b':
     			strcpy(root, optarg);
     			break;
+    		case 'c':
+    			strcpy(numThreads, optarg);
+    			break;
+    		case 'd':
+    			strcpy(time_out, optarg);
+    			break;
     		case '?':
     			break;
     		default:
@@ -230,25 +375,47 @@ int main(int argc, char* argv[]) {
     }
     
     int listenFd = open_listenfd(port);
+    thread_number = atoi(numThreads);
+    timeout = atoi(time_out);
+    dirName = root;
     
-    for (;;) {
+    for(int i = 0;i < thread_number;i++){
+    	if(pthread_create(&thread_pool[i],NULL,thread_function,NULL) != 0){
+    		printf("Failed to create thread");
+    	}
+    }
+    
+    infinite
+    {
         struct sockaddr_storage clientAddr; 
         socklen_t clientLen = sizeof(struct sockaddr_storage); 
 
         int connFd = accept(listenFd, (SA *) &clientAddr, &clientLen);
         
+        if(connFd < 0){
+        	fprintf(stderr, "Failed to accpet\n");
+        	continue;
+        }
+        
+        struct survival_bag *context = (struct survival_bag *) malloc(sizeof(struct survival_bag));
+        
+        context->connFd = connFd;
+        
+        memcpy(&context->clientAddr,&clientAddr,sizeof(struct sockaddr_storage));
+        
         char hostBuf[BUFSIZE], svcBuf[BUFSIZE];
         if (getnameinfo((SA *) &clientAddr, clientLen, hostBuf, BUFSIZE, svcBuf, BUFSIZE, 0) == 0){
-        	printf("Connection from %s:%s\n", hostBuf, svcBuf); 
-        }
+        	 printf("Connection from %s:%s\n", hostBuf, svcBuf); 
+        } 
         else{
-        	printf("Connection from UNKNOWN.");
+        	 printf("Connection from UNKNOWN.");
         }
-            
-        serve_http(connFd,root);
-        close(connFd);
-        printf("Activate\n");
+       int *pclient = malloc(sizeof(int));
+       *pclient = connFd;
+       pthread_mutex_lock(&mutex);
+       enqueue(context);
+       pthread_cond_signal(&condition_var);
+       pthread_mutex_unlock(&mutex);
     }
-    
     return 0;
 }

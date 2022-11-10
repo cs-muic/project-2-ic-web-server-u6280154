@@ -102,7 +102,7 @@ void write_all(int connFd, char *buf, size_t len) {
     }
 }
 
-/* Bad, slow readline */
+
 ssize_t read_line(int connFd, char *usrbuf, size_t maxlen) {
    enum{
    	STATE_START = 0,STATE_CR,STATE_CRLF
@@ -118,7 +118,7 @@ ssize_t read_line(int connFd, char *usrbuf, size_t maxlen) {
    while (state != STATE_CRLF) {
 		char expected = 0;
 		
-		if(i ==max){
+		if(i == max){
 			break;
 		}
 		
@@ -148,6 +148,6 @@ ssize_t read_line(int connFd, char *usrbuf, size_t maxlen) {
 		
 		}
 	}
-	usrbuf[i] = '\0';
-	return i;	
+    usrbuf[i] = '\0';
+    return i;	
 }

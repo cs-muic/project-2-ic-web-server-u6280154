@@ -5,7 +5,7 @@ SRC := $(wildcard $(SRC_DIR)/*.c)
 # all objects
 OBJ := $(OBJ_DIR)/y.tab.o $(OBJ_DIR)/lex.yy.o $(OBJ_DIR)/parse.o $(OBJ_DIR)/pcsa_net.o $(OBJ_DIR)/icws.o
 # all binaries
-BIN := icsw
+BIN := icws
 # C compiler
 CC  := gcc
 # C PreProcessor Flag
@@ -13,12 +13,13 @@ CPPFLAGS :=
 # compiler flags
 CFLAGS   := -g -Wall
 # DEPS = parse.h y.tab.h
+LIBFLAGS=-pthread
 
 default: all
 all : icws
 
 icws: $(OBJ)
-	$(CC) $^ -o $@
+	$(CC) $(LIBFLAGS) $^ -o $@
 
 $(SRC_DIR)/lex.yy.c: $(SRC_DIR)/lexer.l
 	flex -o $@ $^
