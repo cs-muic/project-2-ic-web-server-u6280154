@@ -42,40 +42,29 @@ pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 struct survival_bag{
 	struct sockaddr_storage clientAddr;
 	int connFd;
-	
 };
+
+void respond_with_number(int status,int connFd){
+        char *response;
+	switch(status){
+		case 501:
+		   response = "HTTP/1.1 501 Method Not Implemented\r\n\r\n";
+		   break;
+		case 505:
+		   response = "HTTP/1.1 505 Bad Version Number\r\n\r\n";
+		   break;
+		case 400:
+		   response = "HTTP/1.1 400 Parsing Failed\r\n\r\n";
+		   break;
+	}
+	write_all(connFd,response,strlen(response));
+}
 
 void respond_404(int connFd,char* type){
 	char *msg = "<h1>404 NOT FOUND</h1>";
 	char buf[BUFSIZE];
 	memset(buf,0,BUFSIZE);
 	sprintf(buf, "HTTP/1.1 404 Not Found\r\n"
-	"Server: Icws\r\n"
-	"Content-length: %lu\r\n"
-	"Connection: %s\r\n"
-	"Content-type: text/html\r\n\r\n",strlen(msg),type);
-	write_all(connFd, buf, strlen(buf));
-	write_all(connFd, msg, strlen(msg));
-}
-
-void respond_501(int connFd,char* type){
-	char *msg = "<h1>501 METHOD NOT IMPLEMENTED</h1>";
-	char buf[BUFSIZE];
-	memset(buf,0,BUFSIZE);
-	sprintf(buf, "HTTP/1.1 501 method not implemented\r\n"
-	"Server: Icws\r\n"
-	"Content-length: %lu\r\n"
-	"Connection: %s\r\n"
-	"Content-type: text/html\r\n\r\n",strlen(msg),type);
-	write_all(connFd, buf, strlen(buf));
-	write_all(connFd, msg, strlen(msg));
-}
-
-void respond_505(int connFd,char* type){
-	char *msg = "<h1>505 BAD VERSION NUMBER</h1>";
-	char buf[BUFSIZE];
-	memset(buf,0,BUFSIZE);
-	sprintf(buf, "HTTP/1.1 505 bad version number\r\n"
 	"Server: Icws\r\n"
 	"Content-length: %lu\r\n"
 	"Connection: %s\r\n"
@@ -147,7 +136,6 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	get_filename(filename, root, object);
 	int inFd = open(filename, O_RDONLY);
 	if(inFd < 0){
-	        printf("Activate11\n");
 		fprintf(stderr,"open file error\n");
 		respond_404(connFd,type);
 		if(inFd){
@@ -155,7 +143,6 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 		}
 		return;
 	}
-	
         struct stat statbuf;
 	int readNum;
 	char date[DATESIZE],last_modified[DATESIZE];
@@ -164,7 +151,6 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	mime = mime_type(ext);
 	server_date(date);
 	server_last_modified(last_modified,statbuf);
-	
 	sprintf(buf, "HTTP/1.1 200 OK\r\n"
 	"Date: %s\r\n"
 	"Server: Icws\r\n"
@@ -173,16 +159,13 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	"Content-type: %s\r\n"
 	"Last-Modified:%s\r\n\r\n",
 	date,statbuf.st_size,type,mime,last_modified);
-
 	write_all(connFd, buf, strlen(buf));
-	
 	if(key == 1){
 	        char get[BUFSIZE];
 		while((readNum = read(inFd,get,BUFSIZE)) > 0){
 			write_all(connFd,get,readNum);
 	        }
 	}
-	
 	if(readNum == -1){
 		fprintf(stderr,"read file error\n");
 		return;
@@ -190,7 +173,6 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	if(inFd){
 		close(inFd);
 	}
-
 }
 
 int serve_http(int connFd, char* root){   
@@ -209,23 +191,23 @@ int serve_http(int connFd, char* root){
    	else{
    		while((readline = read_line(connFd,line,BUFSIZE)) > 0){
    			strcat(buf, line);
-   			if(strstr(buf,"\r\n\r\n") != NULL){
+   			if(strcmp(line,"\r\n") == 0){
    				break;
    			}
-   			memset(line,'\0',BUFSIZE);
    		}
    		break;
    	}
    }
-   
-   printf("%s\n",buf);
    pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
    pthread_mutex_unlock(&mutex_parse);
-   
    int connection = PERSISTENT;
    char* connection_type;
-   
+    if(request == NULL){
+    	respond_with_number(400,connFd);
+    	memset(buf,0,BUFSIZE);
+    	return connection;
+   }
    for(int i = 0;i < request->header_count;i++){
    	if(strcmp(request->headers[i].header_name,"Connection") == 0){
    		if(strcmp(request->headers[i].header_value,"close")){
@@ -237,13 +219,10 @@ int serve_http(int connFd, char* root){
    		break;
    	}
    }
-   
    if(strcmp(request->http_version,"HTTP/1.1") != 0){
-   	respond_505(connFd,connection_type);
-   	
+   	respond_with_number(505,connFd);
    	free(request->headers);
         free(request);
-        
         memset(buf,0,BUFSIZE);
    	return connection;
    }
@@ -254,7 +233,7 @@ int serve_http(int connFd, char* root){
    	respond(connFd,root,request->http_uri,0,connection_type);
    }
    else{
-   	respond_501(connFd,connection_type);
+   	respond_with_number(501,connFd);
    }   
    free(request->headers);
    free(request);
@@ -304,7 +283,6 @@ struct survival_bag* dequeue(){
 void* conn_handler(void *args) {
 	struct survival_bag *context = (struct survival_bag *) args;
 	int connection = PERSISTENT;
-	
 	while(connection == 1){
 		connection = serve_http(context->connFd, dirName);
 	}
@@ -313,13 +291,10 @@ void* conn_handler(void *args) {
 	return NULL;
 }  
 
-
 void* thread_function(void *args){
 	infinite
 	{
 		int *pclient,detect = 0;
-		//int detect = 0;
-		
 		pthread_mutex_lock(&mutex);
 		
 		if((pclient = dequeue()) == NULL){
@@ -327,9 +302,7 @@ void* thread_function(void *args){
 			pclient = dequeue();
 			detect = 1;
 		}
-		
 		pthread_mutex_unlock(&mutex);
-		
 		if(detect > 0){
 			conn_handler(pclient);
 		}
