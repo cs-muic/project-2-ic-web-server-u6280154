@@ -35,8 +35,7 @@ char* dirName;
 int thread_number,timeout;
 
 pthread_t thread_pool[MAXTHREAD];
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex_parse = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER,mutex_parse = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
 
 struct survival_bag{
@@ -55,6 +54,9 @@ void respond_with_number(int status,int connFd){
 		   break;
 		case 400:
 		   response = "HTTP/1.1 400 Parsing Failed\r\n\r\n";
+		   break;
+		case 411:
+		   response = "HTTP/1.1 411 File size missing\r\n\r\n";
 		   break;
 	}
 	write_all(connFd,response,strlen(response));
@@ -135,6 +137,7 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	char filename[BUFSIZE],buf[BUFSIZE];
 	get_filename(filename, root, object);
 	int inFd = open(filename, O_RDONLY);
+	
 	if(inFd < 0){
 		fprintf(stderr,"open file error\n");
 		respond_404(connFd,type);
@@ -143,10 +146,17 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 		}
 		return;
 	}
+	
         struct stat statbuf;
 	int readNum;
 	char date[DATESIZE],last_modified[DATESIZE];
 	stat(filename,&statbuf);
+	
+	if(statbuf.st_size < 0){
+		respond_with_number(411,connFd);
+		return;
+	}
+	
 	char *ext = get_Extension(filename), *mime;
 	mime = mime_type(ext);
 	server_date(date);
@@ -198,16 +208,20 @@ int serve_http(int connFd, char* root){
    		break;
    	}
    }
+   
    pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
    pthread_mutex_unlock(&mutex_parse);
+   
    int connection = PERSISTENT;
    char* connection_type;
+   
     if(request == NULL){
     	respond_with_number(400,connFd);
     	memset(buf,0,BUFSIZE);
     	return connection;
    }
+   
    for(int i = 0;i < request->header_count;i++){
    	if(strcmp(request->headers[i].header_name,"Connection") == 0){
    		if(strcmp(request->headers[i].header_value,"close")){
