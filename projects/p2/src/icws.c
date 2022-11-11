@@ -200,10 +200,12 @@ int serve_http(int connFd, char* root){
    	}
    	else{
    		while((readline = read_line(connFd,line,BUFSIZE)) > 0){
-   			strcat(buf, line);
-   			if(strcmp(line,"\r\n") == 0){
-   				break;
-   			}
+   		strcat(buf,line);
+   		if(strstr(buf,"\r\n\r\n") != NULL){
+   			memset(line,'\0',BUFSIZE);
+   			break;
+   		     }
+   		memset(line,'\0',BUFSIZE);
    		}
    		break;
    	}
@@ -403,6 +405,12 @@ int main(int argc, char* argv[]) {
        enqueue(context);
        pthread_cond_signal(&condition_var);
        pthread_mutex_unlock(&mutex);
+    }
+    
+    for(int i = 0;i < thread_number;i++){
+    	if(pthread_join(thread_pool[i],NULL) != 0){
+    		printf("Failed to join thread");
+    	}
     }
     return 0;
 }
