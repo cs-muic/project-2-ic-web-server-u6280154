@@ -32,16 +32,11 @@
 typedef struct sockaddr SA;
 
 char* dirName;
-int thread_number,timeout;
+int thread_number,timeout,taskCount = 0;
 
 pthread_t thread_pool[MAXTHREAD];
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER,mutex_parse = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex_q = PTHREAD_MUTEX_INITIALIZER,mutex_parse = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t condition_var = PTHREAD_COND_INITIALIZER;
-
-struct survival_bag{
-	struct sockaddr_storage clientAddr;
-	int connFd;
-};
 
 void respond_with_number(int status,int connFd){
         char *response;
@@ -200,12 +195,12 @@ int serve_http(int connFd, char* root){
    	}
    	else{
    		while((readline = read_line(connFd,line,BUFSIZE)) > 0){
-   		strcat(buf,line);
-   		if(strstr(buf,"\r\n\r\n") != NULL){
-   			memset(line,'\0',BUFSIZE);
+   			strcat(buf,line);
+   			if(strstr(buf,"\r\n\r\n") != NULL){
+   				memset(line,'\0',BUFSIZE);
    			break;
    		     }
-   		memset(line,'\0',BUFSIZE);
+   			memset(line,'\0',BUFSIZE);
    		}
    		break;
    	}
@@ -257,30 +252,12 @@ int serve_http(int connFd, char* root){
    return connection;
 }	
 
-struct node{
-	struct node* next;
-	struct survival_bag *context;
+struct survival_bag{
+	struct sockaddr_storage clientAddr;
+	int connFd;
 };
 
-typedef struct node node_t;
-
-node_t* head = NULL;
-node_t* tail = NULL;
-
-void enqueue(struct survival_bag *client_socket){
-	node_t *newnode = malloc(sizeof(node_t));
-	newnode->context = client_socket;
-	newnode->next = NULL;
-	
-	if(tail == NULL){
-		head = newnode;
-	}
-	else{
-		tail->next = newnode;
-	
-	}
-	tail = newnode;
-}
+struct survival_bag taskQ[256];
 
 struct survival_bag* dequeue(){
 	if(head != NULL){
@@ -296,32 +273,39 @@ struct survival_bag* dequeue(){
 	return NULL;
 }
   
-void* conn_handler(void *args) {
-	struct survival_bag *context = (struct survival_bag *) args;
+void* conn_handler(struct survival_bag* task) {
 	int connection = PERSISTENT;
 	while(connection == 1){
-		connection = serve_http(context->connFd, dirName);
+		connection = serve_http(task->connFd, dirName);
 	}
-	close(context->connFd);
-	free(context);
+	close(task->connFd);
 	return NULL;
 }  
+
+void submit(struct survival_bag task){
+       pthread_mutex_lock(&mutex_q);
+       taskQ[taskCount] = task;
+       taskCount++;
+       pthread_mutex_unlock(&mutex_q);
+       pthread_cond_signal(&condition_var);
+}
 
 void* thread_function(void *args){
 	infinite
 	{
-		int *pclient,detect = 0;
-		pthread_mutex_lock(&mutex);
+		struct survival_bag task;
+		pthread_mutex_lock(&mutex_q);
+		while(taskCount == 0){
+			pthread_cond_wait(&condition_var,&mutex_q);
+		}
 		
-		if((pclient = dequeue()) == NULL){
-			pthread_cond_wait(&condition_var, &mutex);
-			pclient = dequeue();
-			detect = 1;
+		for(int i = 0;i < taskCount-1;i++){
+			taskQ[i] = taskQ[i+1];
 		}
-		pthread_mutex_unlock(&mutex);
-		if(detect > 0){
-			conn_handler(pclient);
-		}
+		
+		taskCount--;
+		pthread_mutex_unlock(&mutex_q);
+		conn_handler(&taskQ[0]);
 	}
 }
 
@@ -387,9 +371,7 @@ int main(int argc, char* argv[]) {
         }
         
         struct survival_bag *context = (struct survival_bag *) malloc(sizeof(struct survival_bag));
-        
         context->connFd = connFd;
-        
         memcpy(&context->clientAddr,&clientAddr,sizeof(struct sockaddr_storage));
         
         char hostBuf[BUFSIZE], svcBuf[BUFSIZE];
@@ -399,12 +381,7 @@ int main(int argc, char* argv[]) {
         else{
         	 printf("Connection from UNKNOWN.");
         }
-       int *pclient = malloc(sizeof(int));
-       *pclient = connFd;
-       pthread_mutex_lock(&mutex);
-       enqueue(context);
-       pthread_cond_signal(&condition_var);
-       pthread_mutex_unlock(&mutex);
+       submit(*context);
     }
     
     for(int i = 0;i < thread_number;i++){
