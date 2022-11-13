@@ -129,7 +129,7 @@ void server_last_modified(char* last_modified,struct stat statbuf){
 }
 
 void respond(int connFd,char *root,char *object,int key,char* type){
-	char filename[BUFSIZE],buf[BUFSIZE];
+	char filename[BUFSIZE];
 	get_filename(filename, root, object);
 	int inFd = open(filename, O_RDONLY);
 	
@@ -145,7 +145,7 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	
         struct stat statbuf;
 	int readNum;
-	char date[DATESIZE],last_modified[DATESIZE];
+	char date[DATESIZE],last_modified[DATESIZE],buf[BUFSIZE];
 	stat(filename,&statbuf);
 	
 	if(statbuf.st_size < 0){
@@ -182,8 +182,7 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 }
 
 int serve_http(int connFd, char* root){   
-   char buf[BUFSIZE];
-   char line[BUFSIZE];
+   char buf[BUFSIZE],line[BUFSIZE];
    struct pollfd fds[1];
    int readline;  
    infinite{
@@ -198,10 +197,7 @@ int serve_http(int connFd, char* root){
    	}
    	else{
    		while((readline = read(connFd,line,BUFSIZE)) > 0){
-   			printf("Activate1\n");
-   			printf("%d\n",readline);
    			strcat(buf,line);
-   			printf("%s\n",line);
    			if(strstr(line,"\r\n\r\n") != NULL){
    			        memset(line,'\0',BUFSIZE);
    				break;
@@ -211,21 +207,16 @@ int serve_http(int connFd, char* root){
    		break;
    	}
    }
-  
    pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
    pthread_mutex_unlock(&mutex_parse);
-   
    int connection = PERSISTENT;
    char* connection_type;
-   
     if(request == NULL){
     	respond_with_number(400,connFd);
     	memset(buf,0,BUFSIZE);
-    	memset(line,0,BUFSIZE);
     	return connection;
    }
-   
    for(int i = 0;i < request->header_count;i++){
    	if(strcmp(request->headers[i].header_name,"Connection") == 0){
    		if(strcmp(request->headers[i].header_value,"close")){
@@ -245,7 +236,6 @@ int serve_http(int connFd, char* root){
         memset(buf,0,BUFSIZE);
    	return connection;
    }
-   
    if(strcmp(request->http_method, "GET") == 0){
    	respond(connFd,root,request->http_uri,1,connection_type);
    }
@@ -270,25 +260,13 @@ struct survival_bag{
 struct survival_bag taskQ[256];
 
 void* conn_handler(struct survival_bag* task) {
-
 	int connection = PERSISTENT;
-	
 	while(connection == PERSISTENT){
 		connection = serve_http(task->connFd, dirName);
 	}
-	
 	close(task->connFd);
 	return NULL;
-	
 }  
-
-void submit(struct survival_bag task){
-       pthread_mutex_lock(&mutex_q);
-       taskQ[taskCount] = task;
-       taskCount++;
-       pthread_mutex_unlock(&mutex_q);
-       pthread_cond_signal(&condition_var);
-}
 
 void* thread_function(void *args){
 	infinite
@@ -298,11 +276,9 @@ void* thread_function(void *args){
 		while(taskCount == 0){
 			pthread_cond_wait(&condition_var,&mutex_q);
 		}
-		
 		for(int i = 0;i < taskCount-1;i++){
 			taskQ[i] = taskQ[i+1];
 		}
-		
 		taskCount--;
 		pthread_mutex_unlock(&mutex_q);
 		conn_handler(&taskQ[0]);
@@ -357,7 +333,7 @@ int main(int argc, char* argv[]) {
     		printf("Failed to create thread");
     	}
     }
-    
+
     infinite
     {
         struct sockaddr_storage clientAddr; 
@@ -378,8 +354,14 @@ int main(int argc, char* argv[]) {
         } 
         else{
         	 printf("Connection from UNKNOWN.");
-        }
-        submit(*context);
+        } 
+       	pthread_mutex_lock(&mutex_q);
+       
+       	taskQ[taskCount] = *context;
+       	taskCount++;
+       
+       	pthread_mutex_unlock(&mutex_q);
+       	pthread_cond_signal(&condition_var);
     }
     
     for(int i = 0;i < thread_number;i++){
