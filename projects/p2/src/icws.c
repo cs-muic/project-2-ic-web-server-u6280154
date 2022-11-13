@@ -139,6 +139,7 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 		if(inFd){
 			close(inFd);
 		}
+		printf("File error warning\n");
 		return;
 	}
 	
@@ -184,28 +185,33 @@ int serve_http(int connFd, char* root){
    char buf[BUFSIZE];
    char line[BUFSIZE];
    struct pollfd fds[1];
-   int readline;
+   int readline;  
    infinite{
    	fds[0].fd = connFd;
    	fds[0].events = POLLIN;
    	int pollret = poll(fds,1,timeout*1000);
-   	if(pollret <= 0){
-   	        memset(buf,0,BUFSIZE);
+   	if(pollret < 0){
+   		return CLOSE;
+   	}
+   	else if(pollret == 0){
    		return CLOSE;
    	}
    	else{
-   		while((readline = read_line(connFd,line,BUFSIZE)) > 0){
+   		while((readline = read(connFd,line,BUFSIZE)) > 0){
+   			printf("Activate1\n");
+   			printf("%d\n",readline);
    			strcat(buf,line);
-   			if(strstr(buf,"\r\n\r\n") != NULL){
-   				memset(line,'\0',BUFSIZE);
-   			break;
-   		     }
+   			printf("%s\n",line);
+   			if(strstr(line,"\r\n\r\n") != NULL){
+   			        memset(line,'\0',BUFSIZE);
+   				break;
+   			}
    			memset(line,'\0',BUFSIZE);
    		}
    		break;
    	}
    }
-   
+  
    pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
    pthread_mutex_unlock(&mutex_parse);
@@ -216,12 +222,14 @@ int serve_http(int connFd, char* root){
     if(request == NULL){
     	respond_with_number(400,connFd);
     	memset(buf,0,BUFSIZE);
+    	memset(line,0,BUFSIZE);
     	return connection;
    }
    
    for(int i = 0;i < request->header_count;i++){
    	if(strcmp(request->headers[i].header_name,"Connection") == 0){
    		if(strcmp(request->headers[i].header_value,"close")){
+   		        connection = CLOSE;
    			connection_type = "close";
    		}
    		else{
@@ -237,6 +245,7 @@ int serve_http(int connFd, char* root){
         memset(buf,0,BUFSIZE);
    	return connection;
    }
+   
    if(strcmp(request->http_method, "GET") == 0){
    	respond(connFd,root,request->http_uri,1,connection_type);
    }
@@ -246,6 +255,7 @@ int serve_http(int connFd, char* root){
    else{
    	respond_with_number(501,connFd);
    }   
+   
    free(request->headers);
    free(request);
    memset(buf,0,BUFSIZE);
@@ -259,27 +269,17 @@ struct survival_bag{
 
 struct survival_bag taskQ[256];
 
-struct survival_bag* dequeue(){
-	if(head != NULL){
-		struct survival_bag *result = head->context;
-		node_t *temp = head;
-		head = head->next;
-		if(head == NULL){
-			tail = NULL;
-		}
-		free(temp);
-		return result;
-	}
-	return NULL;
-}
-  
 void* conn_handler(struct survival_bag* task) {
+
 	int connection = PERSISTENT;
-	while(connection == 1){
+	
+	while(connection == PERSISTENT){
 		connection = serve_http(task->connFd, dirName);
 	}
+	
 	close(task->connFd);
 	return NULL;
+	
 }  
 
 void submit(struct survival_bag task){
@@ -362,9 +362,7 @@ int main(int argc, char* argv[]) {
     {
         struct sockaddr_storage clientAddr; 
         socklen_t clientLen = sizeof(struct sockaddr_storage); 
-
         int connFd = accept(listenFd, (SA *) &clientAddr, &clientLen);
-        
         if(connFd < 0){
         	fprintf(stderr, "Failed to accpet\n");
         	continue;
@@ -381,7 +379,7 @@ int main(int argc, char* argv[]) {
         else{
         	 printf("Connection from UNKNOWN.");
         }
-       submit(*context);
+        submit(*context);
     }
     
     for(int i = 0;i < thread_number;i++){
