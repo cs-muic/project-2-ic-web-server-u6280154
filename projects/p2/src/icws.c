@@ -1,3 +1,5 @@
+#define _GNU_SOURCE
+
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -31,7 +33,7 @@
 
 typedef struct sockaddr SA;
 
-char* dirName;
+char* dirName,*cgi_dirName,*port;
 int thread_number,timeout,taskCount = 0;
 
 pthread_t thread_pool[MAXTHREAD];
@@ -181,6 +183,181 @@ void respond(int connFd,char *root,char *object,int key,char* type){
 	}
 }
 
+void fail_exit(char *msg) { fprintf(stderr, "%s\n", msg); exit(-1); }
+
+int piper(int connFd,char* root,Request *request){
+    int c2pFds[2]; /* Child to parent pipe */
+    int p2cFds[2]; /* Parent to child pipe */
+
+    if (pipe(c2pFds) < 0) fail_exit("c2p pipe failed.");
+    if (pipe(p2cFds) < 0) fail_exit("p2c pipe failed.");
+
+    int pid = fork();
+
+    if (pid < 0) fail_exit("Fork failed.");
+    if (pid == 0) { /* Child - set up the conduit & run inferior cmd */
+
+        /* Wire pipe's incoming to child's stdin */
+        /* First, close the unused direction. */
+        if (close(p2cFds[1]) < 0) fail_exit("failed to close p2c[1]");
+        if (p2cFds[0] != STDIN_FILENO) {
+            if (dup2(p2cFds[0], STDIN_FILENO) < 0)
+                fail_exit("dup2 stdin failed.");
+            if (close(p2cFds[0]) < 0)
+                fail_exit("close p2c[0] failed.");
+        }
+        
+        /* Wire child's stdout to pipe's outgoing */
+        /* But first, close the unused direction */
+        if (close(c2pFds[0]) < 0) fail_exit("failed to close c2p[0]");
+        if (c2pFds[1] != STDOUT_FILENO) {
+            if (dup2(c2pFds[1], STDOUT_FILENO) < 0)
+                fail_exit("dup2 stdin failed.");
+            if (close(c2pFds[1]) < 0)
+                fail_exit("close pipeFd[0] failed.");
+        }
+        
+        
+        char* accept = NULL;
+        char* referer = NULL;
+        char* accept_encoding = NULL;
+        char* accept_language = NULL;
+        char* accept_charset = NULL;
+        char* accept_cookie = NULL;
+        char* accept_user_agent = NULL;
+        char* connection = NULL;
+        char* content_length = NULL;
+        char* header_name,*header_value,*ext,*mime;
+        
+        for(int i = 0;i < request->header_count;i++){
+        	header_name = request->headers[i].header_name;
+        	header_value = request->headers[i].header_value;
+        	if(!strcasecmp(header_name,"connection")){
+        		connection = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept")){
+        		accept = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"referer")){
+        		referer = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept_encoding")){
+        		accept_encoding = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept_language")){
+        		accept_language = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept_charset")){
+        		accept_charset = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept_cookie")){
+        		accept_cookie = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"accept_user_agent")){
+        		accept_user_agent = header_value;
+        	}
+        	else if(!strcasecmp(header_name,"content_length")){
+        		content_length = header_value;
+        	}
+        }
+        
+        ext = get_Extension(request->http_uri);
+        mime = mime_type(ext);
+        
+        setenv("CONTENT_TYPE",mime,1);
+        setenv("GATEWAY_INTERFACE","CGI/1.1",1);
+        
+        char** tokenList[BUFSIZE],*token = strtok(request->http_uri,"?");
+        int i = 0;
+        while(token != NULL){
+        	tokenList[i] = token;
+        	i++;
+                token = strtok(NULL,"?");
+        }
+        
+        setenv("PATH_INFO",tokenList[0],1);
+        setenv("QUERY_STRIN",tokenList[1],1);
+        setenv("REMOTE_ADDR",connFd,1);
+        setenv("REQUEST_METHOD",request->http_method,1);
+        setenv("REQUEST_URI",request->http_uri,1);
+        setenv("SCRIPT_NAME",cgi_dirName,1);
+        setenv("SERVER_PORT",port,1);
+        setenv("SERVER_PROTOCOL","HTTP/1.1",1);
+        setenv("SERVER_SOFTWARE","ICWS",1);
+        setenv("HHTP_ACCEPT",accept,1);
+        
+        if(referer != NULL){
+        	setenv("HTTP_REFERER",referer,1);
+        }
+        
+        if(accept_encoding != NULL){
+        	setenv("HTTP_ACCEPT_ENCODING",accept_encoding,1);
+        }
+        
+        if(accept_language != NULL){
+        	setenv("HTTP_ACCEPT_language",accept_language,1);
+        }
+        
+        if(accept_cookie != NULL){
+        	setenv("ACCEPT_COOKIE",accept_cookie,1);
+        }
+        
+        if(accept_user_agent != NULL){
+        	setenv("HTTP_USER_AGENT",accept_user_agent,1);
+        }
+        
+        if(connection != NULL){
+        	setenv("HHTP_CONNECTION",connection,1);
+        }
+        
+        if(content_length != NULL){
+        	setenv("CONTENT_LENGTH",content_length,1);
+        }
+        
+        if(accept_charset != NULL){
+        	setenv("HHTP_ACCEPT_CHARSET",accept_charset,1);
+        }
+        
+        char* inferiorArgv[] = {cgi_dirName,NULL};
+        
+        if(execvpe(inferiorArgv[0],inferiorArgv,environ) < 0){
+        	fail_exit("exec failed.");
+        }
+     }
+     else { /* Parent - send a random message */
+        /* Close the write direction in parent's incoming */
+        if (close(c2pFds[1]) < 0) fail_exit("failed to close c2p[1]");
+
+        /* Close the read direction in parent's outgoing */
+        if (close(p2cFds[0]) < 0) fail_exit("failed to close p2c[0]");
+
+        char *message = "OMGWTFBBQ\n";
+        /* Write a message to the child - replace with write_all as necessary */
+        write(p2cFds[1], message, strlen(message));
+        /* Close this end, done writing. */
+        if (close(p2cFds[1]) < 0) fail_exit("close p2c[01] failed.");
+
+        char buf[BUFSIZE+1];
+        ssize_t numRead;
+        /* Begin reading from the child */
+        while ((numRead = read(c2pFds[0], buf, BUFSIZE))>0) {
+            printf("Parent saw %ld bytes from child...\n", numRead);
+            buf[numRead] = '\x0'; /* Printing hack; won't work with binary data */
+            printf("-------\n");
+            printf("%s", buf);
+            printf("-------\n");
+        }
+        /* Close this end, done reading. */
+        if (close(c2pFds[0]) < 0) fail_exit("close c2p[01] failed.");
+
+        /* Wait for child termination & reap */
+        int status;
+
+        if (waitpid(pid, &status, 0) < 0) fail_exit("waitpid failed.");
+        printf("Child exited... parent's terminating as well.\n");
+    } 
+}
+
 int serve_http(int connFd, char* root){   
    char buf[BUFSIZE],line[BUFSIZE];
    struct pollfd fds[1];
@@ -236,10 +413,10 @@ int serve_http(int connFd, char* root){
         memset(buf,0,BUFSIZE);
    	return connection;
    }
-   if(strcmp(request->http_method, "GET") == 0){
+   if(!strcmp(request->http_method, "GET")){
    	respond(connFd,root,request->http_uri,1,connection_type);
    }
-   else if(strcmp(request->http_method, "HEAD") == 0){
+   else if(!strcmp(request->http_method, "HEAD")){
    	respond(connFd,root,request->http_uri,0,connection_type);
    }
    else{
@@ -271,7 +448,6 @@ void* conn_handler(struct survival_bag* task) {
 void* thread_function(void *args){
 	infinite
 	{
-		struct survival_bag task;
 		pthread_mutex_lock(&mutex_q);
 		while(taskCount == 0){
 			pthread_cond_wait(&condition_var,&mutex_q);
@@ -279,9 +455,14 @@ void* thread_function(void *args){
 		for(int i = 0;i < taskCount-1;i++){
 			taskQ[i] = taskQ[i+1];
 		}
+		
 		taskCount--;
 		pthread_mutex_unlock(&mutex_q);
 		conn_handler(&taskQ[0]);
+		
+		if(taskQ[0].connFd < 0){
+			break;
+		}
 	}
 }
 
@@ -293,7 +474,7 @@ int main(int argc, char* argv[]) {
     }
     
     int opt,option_index;
-    char port[BUFSIZE],root[BUFSIZE],numThreads[BUFSIZE],time_out[BUFSIZE];
+    char port_temp[BUFSIZE],root[BUFSIZE],numThreads[BUFSIZE],time_out[BUFSIZE];
     
     struct option long_options[] = {
     	{"port",1,NULL,'a'},
@@ -305,7 +486,7 @@ int main(int argc, char* argv[]) {
     while((opt = getopt_long(argc,argv,"a:b:",long_options,&option_index)) != -1){
     	switch(opt){
     		case 'a':
-    			strcpy(port, optarg);
+    			strcpy(port_temp, optarg);
     			break;
     		case 'b':
     			strcpy(root, optarg);
@@ -323,6 +504,7 @@ int main(int argc, char* argv[]) {
     	}
     }
     
+    port = port_temp;
     int listenFd = open_listenfd(port);
     thread_number = atoi(numThreads);
     timeout = atoi(time_out);
