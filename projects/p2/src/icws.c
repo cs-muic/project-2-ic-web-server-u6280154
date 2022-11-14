@@ -284,7 +284,7 @@ int piper(int connFd,char* root,Request *request){
         setenv("SERVER_PORT",port,1);
         setenv("SERVER_PROTOCOL","HTTP/1.1",1);
         setenv("SERVER_SOFTWARE","ICWS",1);
-        setenv("HHTP_ACCEPT",accept,1);
+        setenv("HTTP_ACCEPT",accept,1);
         
         if(referer != NULL){
         	setenv("HTTP_REFERER",referer,1);
@@ -307,7 +307,7 @@ int piper(int connFd,char* root,Request *request){
         }
         
         if(connection != NULL){
-        	setenv("HHTP_CONNECTION",connection,1);
+        	setenv("HTTP_CONNECTION",connection,1);
         }
         
         if(content_length != NULL){
@@ -315,7 +315,7 @@ int piper(int connFd,char* root,Request *request){
         }
         
         if(accept_charset != NULL){
-        	setenv("HHTP_ACCEPT_CHARSET",accept_charset,1);
+        	setenv("HTTP_ACCEPT_CHARSET",accept_charset,1);
         }
         
         char* inferiorArgv[] = {cgi_dirName,NULL};
@@ -538,10 +538,8 @@ int main(int argc, char* argv[]) {
         	 printf("Connection from UNKNOWN.");
         } 
        	pthread_mutex_lock(&mutex_q);
-       
        	taskQ[taskCount] = *context;
        	taskCount++;
-       
        	pthread_mutex_unlock(&mutex_q);
        	pthread_cond_signal(&condition_var);
     }
