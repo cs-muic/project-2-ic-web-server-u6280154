@@ -190,17 +190,68 @@ int piper(int connFd,Request *request){
 	char* args[2];
 	args[0] = cgi_dirName;
 	args[1] = NULL;
+	printf("ffffff%s\n", cgi_dirName);
 	
+	char* header_name,*header_value;
+	
+	for(int i = 0;i < request->header_count;i++){
+		header_name = request->headers[i].header_name;
+		header_value = request->headers[i].header_value;
+		if(!strcasecmp(header_name,"CONNECTION")){
+			setenv("HTTP_CONNECTION",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"ACCEPT")){
+			setenv("HTTP_ACCEPT",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"REFERER")){		
+			setenv("HTTP_REFERER",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"ACCEPT-ENCODING")){
+			setenv("HTTP_ACCEPT_ENCODING",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"ACCEPT-LANGUAGE")){
+			setenv("HTTP_ACCEPT_LANGUAGE",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"COTENT_LENGTH")){
+			setenv("CONTENT_LENGTH",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"USER-AGENT")){
+			setenv("HTTP_USER_AGENT",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"ACCEPT_COOKIE")){
+			setenv("HTTP_COOKIE",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"ACCEPT_CHARSET")){
+			setenv("HTTP_ACCEPT_CHARSET",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"HOST")){
+			setenv("HTTP_HOST",header_value,1);
+		}
+	}
+	//Query & path info
+	char** tokenList[BUFSIZE];
 	char* token = strtok(request->http_uri,"?");
+	tokenList[0] = token;
+	//printf("%s\n",tokenList[0]);
 	token = strtok(NULL,"");
+
+	//Remote address
+	char *char_addr,addr[20];
+	sprintf(addr,"%d",connFd); 
+	char_addr = addr;
 	
+	//9
 	setenv("SERVER_SOFTWARE","icws",1);
 	setenv("GATE_INTERFACE","CGI/1.1",1);
 	setenv("REQUEST_METHOD",request->http_method,1);
 	setenv("REQUEST_URI",request->http_uri,1);
 	setenv("SERVER_PROTOCOL","HTTP/1.1",1);
 	setenv("QUERY_STRING",token,1);
+	setenv("REMOTE_ADDR",char_addr,1);
+	setenv("PATH_INFO",tokenList[0],1);
+	setenv("SERVER_PORT",port,1);
 	
+	//setenv("CONTENT_TYPE",mime_type(request->http_uri),1);
 	pid_t pid = 0;
 	int pipefd[2];
 	
@@ -406,7 +457,7 @@ int main(int argc, char* argv[]) {
         socklen_t clientLen = sizeof(struct sockaddr_storage); 
         int connFd = accept(listenFd, (SA *) &clientAddr, &clientLen);
         if(connFd < 0){
-        	fprintf(stderr, "Failed to accpet\n");
+        	fprintf(stderr, "Failed to accept\n");
         	continue;
         }
         
