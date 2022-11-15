@@ -133,6 +133,12 @@ void server_last_modified(char* last_modified,struct stat statbuf){
 }
 
 void respond(int connFd,char *root,char *object,int key,char* type){
+
+        if(key == 2){
+        	printf("Sorry, I havent do post yet please forgive me\n");
+        	return;
+        }
+        
 	char filename[BUFSIZE];
 	get_filename(filename, root, object);
 	int inFd = open(filename, O_RDONLY);
@@ -342,7 +348,7 @@ int serve_http(int connFd, char* root){
    	return connection;
    }
    
-   if((strcasecmp(request->http_method, "GET") == 0 || strcasecmp(request->http_method, "HEAD") == 0) && strcmp(cgi_checker,"/cgi/") == 0){
+   if((strcasecmp(request->http_method, "GET") == 0 || strcasecmp(request->http_method, "HEAD") == 0 || || strcasecmp(request->http_method, "POST") == 0) && strcmp(cgi_checker,"/cgi/") == 0){
         printf("Pipe activate--------\n");
    	piper(connFd,request);
    }
@@ -351,6 +357,9 @@ int serve_http(int connFd, char* root){
    }
    else if(!strcmp(request->http_method, "HEAD")){
    	respond(connFd,root,request->http_uri,0,connection_type);
+   }
+   else if(!strcmp(request->http_method, "POST")){
+   	respond(connFd,root,request->http_uri,2,connection_type);
    }
    else{
    	respond_with_number(501,connFd);
