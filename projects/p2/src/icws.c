@@ -83,6 +83,7 @@ char* get_Extension(char *filename){
 }
 
 char* mime_type(char *ext){
+        printf("ext is %s\n",ext);
 	if(!strcmp(ext, "html")){
 		return "text/html";
 	}
@@ -190,7 +191,6 @@ int piper(int connFd,Request *request){
 	char* args[2];
 	args[0] = cgi_dirName;
 	args[1] = NULL;
-	printf("ffffff%s\n", cgi_dirName);
 	
 	char* header_name,*header_value;
 	
@@ -212,20 +212,23 @@ int piper(int connFd,Request *request){
 		else if(!strcasecmp(header_name,"ACCEPT-LANGUAGE")){
 			setenv("HTTP_ACCEPT_LANGUAGE",header_value,1);
 		}
-		else if(!strcasecmp(header_name,"COTENT_LENGTH")){
+		else if(!strcasecmp(header_name,"COTENT-LENGTH")){
 			setenv("CONTENT_LENGTH",header_value,1);
 		}
 		else if(!strcasecmp(header_name,"USER-AGENT")){
 			setenv("HTTP_USER_AGENT",header_value,1);
 		}
-		else if(!strcasecmp(header_name,"ACCEPT_COOKIE")){
+		else if(!strcasecmp(header_name,"ACCEPT-COOKIE")){
 			setenv("HTTP_COOKIE",header_value,1);
 		}
-		else if(!strcasecmp(header_name,"ACCEPT_CHARSET")){
+		else if(!strcasecmp(header_name,"ACCEPT-CHARSET")){
 			setenv("HTTP_ACCEPT_CHARSET",header_value,1);
 		}
 		else if(!strcasecmp(header_name,"HOST")){
 			setenv("HTTP_HOST",header_value,1);
+		}
+		else if(!strcasecmp(header_name,"CONTENT-TYPE")){
+			setenv("CONTENT_TYPE",header_value,1);
 		}
 	}
 	//Query & path info
@@ -240,7 +243,6 @@ int piper(int connFd,Request *request){
 	sprintf(addr,"%d",connFd); 
 	char_addr = addr;
 	
-	//9
 	setenv("SERVER_SOFTWARE","icws",1);
 	setenv("GATE_INTERFACE","CGI/1.1",1);
 	setenv("REQUEST_METHOD",request->http_method,1);
@@ -251,13 +253,12 @@ int piper(int connFd,Request *request){
 	setenv("PATH_INFO",tokenList[0],1);
 	setenv("SERVER_PORT",port,1);
 	
-	//setenv("CONTENT_TYPE",mime_type(request->http_uri),1);
 	pid_t pid = 0;
 	int pipefd[2];
 	
 	pipe(pipefd);
 	pid = fork();
-	if(pid == 0){
+	if(!pid){
 		close(pipefd[0]);
 		dup2(pipefd[1],STDOUT_FILENO);
 		execv(args[0],args);
