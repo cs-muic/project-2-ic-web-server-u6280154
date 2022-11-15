@@ -308,8 +308,10 @@ int serve_http(int connFd, char* root){
    pthread_mutex_lock(&mutex_parse);
    Request *request = parse(buf,BUFSIZE,connFd);
    pthread_mutex_unlock(&mutex_parse);
+   
    int connection = PERSISTENT;
    char* connection_type;
+   
     if(request == NULL){
     	respond_with_number(400,connFd);
     	memset(buf,0,BUFSIZE);
@@ -379,24 +381,45 @@ void* conn_handler(struct survival_bag* task) {
 void* thread_function(void *args){
 	infinite
 	{
+		struct survival_bag task;
 		pthread_mutex_lock(&mutex_q);
 		while(!taskCount){
 			pthread_cond_wait(&condition_var,&mutex_q);
 		}
+		
+		task = taskQ[0];
 		for(int i = 0;i < taskCount-1;i++){
 			taskQ[i] = taskQ[i+1];
 		}
 		
+		
 		taskCount--;
 		pthread_mutex_unlock(&mutex_q);
-		conn_handler(&taskQ[0]);
 		
-		if(taskQ[0].connFd < 0){
+		conn_handler(&task);
+		
+		if(task.connFd < 0){
 			break;
 		}
 	}
 }
 
+
+
+void signalHandler(int sig){
+
+	struct survival_bag *overdose = (struct survival_bag *) malloc(sizeof(struct survival_bag));
+	overdose->connFd = -1;
+	
+	for(int i = 0;i < thread_number; i++){
+	 	pthread_mutex_lock(&mutex_q);
+       		taskQ[taskCount] = *overdose;
+       		taskCount++;
+       		pthread_mutex_unlock(&mutex_q);
+       		pthread_cond_signal(&condition_var);
+	}
+
+}
 //./icws --port <portnumber> --root <folderName> --numThreads <nThread> --timeout <ntime>
 int main(int argc, char* argv[]) {
     if(argc < 7){
